@@ -47,8 +47,8 @@ def load_raw_sheet_data(sheet_name):
     sheet = sh.worksheet(sheet_name)
     return sheet.get_all_values()
 
-# 特定のキーワードを含む行を検索する関数
-def find_row_by_exact_keywords(rows, keywords):
+# キーワードでピンポイント行を検索する関数
+def find_row_by_keywords(rows, keywords):
     for idx, row in enumerate(rows):
         if not row or not row[0]:
             continue
@@ -86,51 +86,53 @@ try:
         selected_month = st.sidebar.selectbox("分析対象月を選択", months, index=0)
 
         # ----------------------------------------------------
-        # シート内のキー集計行を検索・抽出
+        # スプレッドシートキー行のピンポイント取得（1〜119行範囲）
         # ----------------------------------------------------
-        # 120行目までの家計簿エリアからピンポイント検索
         kakeibo_area = data[:119]
 
-        _, row_income = find_row_by_exact_keywords(kakeibo_area, ["収入合計", "預入合計", "預入合計"])
-        _, row_expense = find_row_by_exact_keywords(kakeibo_area, ["出費合計", "支出合計", "出費合計"])
+        _, row_income = find_row_by_keywords(kakeibo_area, ["預入合計", "預入合計"])
+        _, row_expense = find_row_by_keywords(kakeibo_area, ["引出合計", "出費合計", "支出合計"])
+        _, row_balance = find_row_by_keywords(kakeibo_area, ["収支合計", "収支合計"])
         
-        # 銀行残高合計行（「銀行残高合計」または「銀行残高」）
-        _, row_bank_total = find_row_by_exact_keywords(kakeibo_area, ["銀行残高合計", "銀行残高合計"])
+        _, row_bank_total = find_row_by_keywords(kakeibo_area, ["銀行残高合計", "銀行残高合計"])
         if not row_bank_total:
-            _, row_bank_total = find_row_by_exact_keywords(kakeibo_area, ["銀行残高"])
+            _, row_bank_total = find_row_by_keywords(kakeibo_area, ["銀行残高"])
 
-        _, row_nisa = find_row_by_exact_keywords(kakeibo_area, ["積み立てNISA", "NISA"])
-        _, row_ideco = find_row_by_exact_keywords(kakeibo_area, ["イデコ", "iDeCo"])
-        _, row_gakushi = find_row_by_exact_keywords(kakeibo_area, ["学資保険"])
+        _, row_nisa = find_row_by_keywords(kakeibo_area, ["積み立てNISA", "NISA"])
+        _, row_ideco = find_row_by_keywords(kakeibo_area, ["イデコ", "iDeCo"])
+        _, row_gakushi = find_row_by_keywords(kakeibo_area, ["学資保険"])
 
-        # 各月の値抽出関数
-        def get_value_for_month(row_data, month_name, calc_mode="sum"):
+        # 月ごとの値抽出処理
+        def get_value_for_month(row_data, month_name, mode="sum"):
             if not row_data:
                 return 0.0
             cols = month_col_indices.get(month_name, [])
             vals = [clean_num(row_data[c]) for c in cols if c < len(row_data) and clean_num(row_data[c]) != 0.0]
             if not vals:
                 return 0.0
-            if calc_mode == "last":
-                return vals[-1]  # 残高行など最後の列の数値を優先
+            if mode == "last":
+                return vals[-1]
             return sum(vals)
 
         # 月別トレンド計算
         monthly_trend = {}
         for m in months:
             monthly_trend[m] = {
-                "収入合計": get_value_for_month(row_income, m, "sum"),
-                "支出": get_value_for_month(row_expense, m, "sum"),
-                "銀行口座残高": get_value_for_month(row_bank_total, m, "last"),
+                "預入合計": get_value_for_month(row_income, m, "sum"),
+                "引出合計": get_value_for_month(row_expense, m, "sum"),
+                "収支合計": get_value_for_month(row_balance, m, "sum"),
+                "銀行残高合計": get_value_for_month(row_bank_total, m, "last"),
                 "積立NISA": get_value_for_month(row_nisa, m, "sum"),
                 "iDeCo": get_value_for_month(row_ideco, m, "sum"),
                 "学資保険": get_value_for_month(row_gakushi, m, "sum"),
             }
 
         # 選択月の数値
-        cur_income = monthly_trend[selected_month]["収入合計"]
-        cur_expense = monthly_trend[selected_month]["支出"]
-        cur_bank = monthly_trend[selected_month]["銀行口座残高"]
+        cur_income = monthly_trend[selected_month]["預入合計"]
+        cur_expense = monthly_trend[selected_month]["引出合計"]
+        cur_balance = monthly_trend[selected_month]["収支合計"]
+        cur_bank = monthly_trend[selected_month]["銀行残高合計"]
+        
         cur_nisa = monthly_trend[selected_month]["積立NISA"]
         cur_ideco = monthly_trend[selected_month]["iDeCo"]
         cur_gakushi = monthly_trend[selected_month]["学資保険"]
@@ -140,39 +142,44 @@ try:
         # UI レイアウト
         # ----------------------------------------------------
         st.title(f"📊 家計簿ダッシュボード ({selected_sheet})")
-        st.markdown(f"### 📍 【{selected_month}】 収支・資産サマリー")
+        st.markdown(f"### 📍 【{selected_month}】 収支サマリー")
 
-        # 1. サマリーカード
+        # 1. KPI サマリーカード（預入合計・引出合計・収支合計）
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 収入合計", f"¥{cur_income:,.0f}")
-        k2.metric("💸 支出", f"¥{cur_expense:,.0f}")
-        k3.metric("🏦 銀行口座残高（繰越含）", f"¥{cur_bank:,.0f}")
-        k4.metric("📈 投資・積立・保険 合計", f"¥{cur_invest_total:,.0f}")
+        k1.metric("💰 預入合計 (行13)", f"¥{cur_income:,.0f}")
+        k2.metric("💸 引出合計 (行85)", f"¥{cur_expense:,.0f}")
+        k3.metric("⚖️ 収支 合計 (行89)", f"¥{cur_balance:,.0f}", 
+                  delta="黒字" if cur_balance >= 0 else "赤字",
+                  delta_color="normal" if cur_balance >= 0 else "inverse")
+        k4.metric("🏦 銀行残高 合計", f"¥{cur_bank:,.0f}")
 
-        st.markdown("##### 内部積立・資産形成の内訳")
-        sub1, sub2, sub3 = st.columns(3)
-        sub1.metric("🌱 積立NISA", f"¥{cur_nisa:,.0f}")
-        sub2.metric("🛡️ iDeCo", f"¥{cur_ideco:,.0f}")
-        sub3.metric("🎓 学資保険", f"¥{cur_gakushi:,.0f}")
+        # 資産形成・積立内訳
+        st.markdown("##### 内部積立・資産形成")
+        sub1, sub2, sub3, sub4 = st.columns(4)
+        sub1.metric("🌱 積立NISA (行106)", f"¥{cur_nisa:,.0f}")
+        sub2.metric("🛡️ iDeCo (行111)", f"¥{cur_ideco:,.0f}")
+        sub3.metric("🎓 学資保険 (行117)", f"¥{cur_gakushi:,.0f}")
+        sub4.metric("📊 資産形成 小計", f"¥{cur_invest_total:,.0f}")
 
         st.markdown("---")
 
         # ----------------------------------------------------
         # 2. 可視化セクション (年間推移グラフ)
         # ----------------------------------------------------
-        st.markdown("#### 📈 年間 収支 & 銀行口座残高 推移")
+        st.markdown("#### 📈 年間 預入・引出・収支推移")
         
         trend_df = pd.DataFrame.from_dict(monthly_trend, orient="index").reset_index()
         trend_df.rename(columns={"index": "月"}, inplace=True)
 
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=trend_df["月"], y=trend_df["収入合計"], name="収入合計", marker_color="#28a745"))
-        fig.add_trace(go.Bar(x=trend_df["月"], y=trend_df["支出"], name="支出", marker_color="#dc3545"))
-        fig.add_trace(go.Scatter(x=trend_df["月"], y=trend_df["銀行口座残高"], name="銀行口座残高 合計", mode="lines+markers", line=dict(color="#007bff", width=3)))
+        fig.add_trace(go.Bar(x=trend_df["月"], y=trend_df["預入合計"], name="預入合計", marker_color="#28a745"))
+        fig.add_trace(go.Bar(x=trend_df["月"], y=trend_df["引出合計"], name="引出合計", marker_color="#dc3545"))
+        fig.add_trace(go.Scatter(x=trend_df["月"], y=trend_df["収支合計"], name="収支 合計", mode="lines+markers", line=dict(color="#ffc107", width=3)))
+        fig.add_trace(go.Scatter(x=trend_df["月"], y=trend_df["銀行残高合計"], name="銀行残高 合計", mode="lines+markers", line=dict(color="#007bff", width=2, dash="dash")))
 
         fig.update_layout(
             barmode="group",
-            height=360,
+            height=380,
             margin=dict(l=20, r=20, t=20, b=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
@@ -181,7 +188,7 @@ try:
         st.markdown("---")
 
         # ----------------------------------------------------
-        # 3. 明細データテーブル (行1〜118の「家計簿」範囲限定表示)
+        # 3. 明細データテーブル (1行目〜118行目)
         # ----------------------------------------------------
         st.markdown("#### 📋 家計簿明細テーブル (1行目〜118行目)")
 
@@ -267,7 +274,7 @@ try:
                 continue
             
             first_cell = str(row[0]).strip()
-            is_highlight = any(k in first_cell for k in ["預入合計", "出費合計", "銀行残高", "NISA", "イデコ", "学資保険"])
+            is_highlight = any(k in first_cell for k in ["預入合計", "引出合計", "出費合計", "収支合計", "収支 合計", "銀行残高", "NISA", "イデコ", "学資保険"])
             row_style = ' class="highlight-row"' if is_highlight else ''
 
             html += f'<tr{row_style}><td>{row_idx}</td>'
